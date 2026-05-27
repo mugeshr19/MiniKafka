@@ -62,6 +62,9 @@ public class Broker{
 
                         for(ConsumerHandler consumer : consumers){
                             if(consumer.topic.equals(topic)){
+                                System.out.println(
+            "Sending message to consumer"
+        );
                                 consumer.writer.println("{\"topic\":\""+topic+"\","+"\"message\":\""+message+"\"}");
                             }
                         }

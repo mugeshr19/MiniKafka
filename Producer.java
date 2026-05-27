@@ -16,9 +16,14 @@ public class Producer {
                     "{\"topic\":\"user-events\","
                     + "\"message\":\"USER_CREATED\"}";*/
 
-            String message =
+            /*String message =
                 "{\"topic\":\"payments\","
-                + "\"message\":\"PAYMENT_SUCCESS\"}";
+                + "\"message\":\"PAYMENT_SUCCESS\"}";*/
+            
+            String message =
+                    "{\"type\":\"produce\","
+                    + "\"topic\":\"user-events\","
+                    + "\"message\":\"USER_CREATED\"}";  
 
             writer.println(message);
             socket.close();
