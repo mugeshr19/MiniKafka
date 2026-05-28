@@ -11,7 +11,10 @@ public class Consumer {
             System.out.println("connected to broker");
             PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
 
-            String subscribeMessage = "{\"type\":\"consume\",\"topic\":\"user-events\"}";
+            //String subscribeMessage = "{\"type\":\"consume\",\"topic\":\"user-events\"}";
+
+            String subscribeMessage = "{\"type\":\"consume\"," + "\"consumerId\":\"consumer1\"," + "\"topic\":\"user-events\","
+            + "\"offsets\":\"1\"}";
 
             out.println(subscribeMessage);
 

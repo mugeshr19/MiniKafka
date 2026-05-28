@@ -5,6 +5,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.io.File;
 import java.io.FileWriter;
+import java.io.FileReader;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -81,12 +82,31 @@ public class Broker{
 
                     }
                     else if(data.contains("\"type\":\"consume\"")){
+                        String consumerId = extractValue(data, "consumerId");
                         String topic = extractValue(data, "topic");
+                        int offset = Integer.parseInt(extractValue(data, "offsets"));
                         PrintWriter writer = new PrintWriter(
                             socket.getOutputStream(),
                             true
                         );
                         consumers.add(new ConsumerHandler(topic,writer));
+                        System.out.println("Consumer subscribed to topic " + topic);
+                        String logFilePath = "logs/" + topic + ".log";
+                        File file = new File(logFilePath);
+
+                        if(file.exists()){
+                            BufferedReader fileReader = new BufferedReader(new FileReader(file));
+                            ArrayList<String> messages = new ArrayList<>();
+                            String line;
+                            while((line = fileReader.readLine())!=null){
+                                messages.add(line);
+                            }
+                            fileReader.close();
+
+                            for(int i = offset;i<messages.size();i++){
+                                writer.println("{\"offset\":\"" + i + "\"," + "\"topic\":\"" + topic + "\"," + "\"message\":\"" + messages.get(i) + "\"}");
+                            }
+                        }
                     }
 
                 }
