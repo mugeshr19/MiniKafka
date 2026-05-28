@@ -3,6 +3,8 @@ import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.io.File;
+import java.io.FileWriter;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -55,6 +57,14 @@ public class Broker{
                         );
                         }
                         topics.get(topic).add(message);
+
+                        String logFilePath = "logs/" + topic + ".log";
+
+                        FileWriter fileWriter = new FileWriter(logFilePath,true);
+
+                        fileWriter.write(message + "\n");
+
+                        fileWriter.close();
 
                         System.out.println("stored in topic" + topic);
                         System.out.println("\nCurrent topic : ");
