@@ -4,7 +4,7 @@ import java.io.PrintWriter;
 
 import java.net.Socket;
 
-public class Consumer {
+public class Consumer1 {
     public static void main(String[] args){
         try{
             Socket socket = new Socket("localhost",9092);
@@ -13,8 +13,8 @@ public class Consumer {
 
             //String subscribeMessage = "{\"type\":\"consume\",\"topic\":\"user-events\"}";
 
-            String subscribeMessage = "{\"type\":\"consume\"," + "\"consumerId\":\"consumer1\"," + "\"topic\":\"user-events\","
-            + "\"offsets\":\"1\"}";
+            String subscribeMessage = "{\"type\":\"consume\"," + "\"consumerId\":\"consumer1\"," + "\"groupId\":\"groupA\"," 
+            + "\"topic\":\"user-events\"," + "\"offset\":\"0\"}";
 
             out.println(subscribeMessage);
 
@@ -23,7 +23,7 @@ public class Consumer {
             String data;
 
             while((data = reader.readLine())!=null){
-                System.out.println("Received Event : " + data);
+                System.out.println("Received Event from 1 : " + data);
             }
         }
         catch(Exception e){
