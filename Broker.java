@@ -13,13 +13,55 @@ import java.util.HashMap;
 public class Broker{
     static HashMap<String,ArrayList<ArrayList<String>>> topics = new HashMap<>();
     static HashMap<String,Integer> partitionCounters = new HashMap<>();
+    static HashMap<String,BrokerNode> brokers = new HashMap<>();
+    static String activeLeader = "broker1";
 
     static ArrayList<ConsumerHandler> consumers = new ArrayList<>();
     static HashMap<String,ArrayList<ConsumerHandler>> consumerGroups = new HashMap<>();
     public static void main(String[] args){
         try{
+            brokers.put(
+                "broker1",
+                new BrokerNode(
+                    "broker1",
+                    "leader"
+                )
+            );
+            brokers.put(
+                "broker2",
+                new BrokerNode(
+                    "broker2",
+                    "replica"
+                )
+            );
+
+            new Thread(()->{
+                try{
+                    Thread.sleep(20000);
+                    brokers.get("broker1").role = "dead";
+                    electNewleader();
+                    Thread.sleep(15000);
+                    System.out.println("\nBroker1 recovered!");
+                    recoverBroker("broker1");
+                }
+                catch(Exception e){
+                    e.printStackTrace();
+                }
+            }).start();
+
             ServerSocket serverSocket = new ServerSocket(9092);
             System.out.println("Broker is running on port 9092");
+
+            /*new Thread(()->{
+                try{
+                    Thread.sleep(20000);
+                    brokers.get("broker1").role = "dead";
+                    electNewleader();
+                }
+                catch(Exception e){
+                    e.printStackTrace();
+                }
+            }).start();*/
 
             while(true){
 
@@ -51,14 +93,18 @@ public class Broker{
 
                         String topic = extractValue(data,"topic");
 
+                        BrokerNode leaderBroker = brokers.get(activeLeader);
+
+                        System.out.println("Current Leader : " + leaderBroker.brokerId);
+
                         String message = extractValue(data,"message");
 
-                        if(!topics.containsKey(topic)){
+                        if(!leaderBroker.messages.containsKey(topic)){
                             ArrayList<ArrayList<String>> partitions = new ArrayList<>();
                             partitions.add(new ArrayList<>());
                             partitions.add(new ArrayList<>());
 
-                            topics.put(
+                            leaderBroker.messages.put(
                                 topic,
                                 partitions
                             );
@@ -68,10 +114,39 @@ public class Broker{
                         }
                         int partition = partitionCounters.get(topic) % 2;
                         partitionCounters.put(topic,partitionCounters.get(topic)+1);
-                        topics.get(topic).get(partition).add(message);
+                        leaderBroker.messages.get(topic).get(partition).add(message);
+
+                        for(String brokerName : brokers.keySet()){
+                            BrokerNode broker = brokers.get(brokerName);
+
+                            if(broker.role.equals("leader")||broker.role.equals("dead")){
+                                continue;
+                            }
+                            if(!broker.messages.containsKey(topic)){
+                                ArrayList<ArrayList<String>> partitions = new ArrayList<>();
+                                new ArrayList<>();
+                                partitions.add(new ArrayList<>());
+                                partitions.add(new ArrayList<>());
+
+                                broker.messages.put(topic,partitions);
+                            }
+                            broker.messages.get(topic).get(partition).add(message);
+                            System.out.println("Replicated to" + broker.brokerId);
+                        }
+
                         System.out.println(
-                                "Stored in partition "
-                                + partition
+                            "Leader Data : "
+                            + brokers.get("broker1").messages
+                        );
+
+                        System.out.println(
+                            "Current Leader : "
+                            + activeLeader
+                        );
+
+                        System.out.println(
+                                "Leader Data "
+                                + brokers.get(activeLeader).messages
                         );
                         String logFilePath = "logs/" + topic + "-" + partition + ".log";
 
@@ -83,7 +158,7 @@ public class Broker{
 
                         System.out.println("stored in topic" + topic);
                         System.out.println("\nCurrent topic : ");
-                        System.out.println(topics);
+                        System.out.println(leaderBroker.messages);
 
                         for(ConsumerHandler consumer : consumers){
                             if(consumer.topic.equals(topic)&&consumer.partition==partition){
@@ -164,6 +239,47 @@ public class Broker{
 
         return json.substring(start, end);
     }
+
+    public static void electNewleader(){
+        System.out.println("\nLeader crashed!");
+        for(String brokerName:brokers.keySet()){
+            BrokerNode broker = brokers.get(brokerName);
+            if(broker.role.equals("replica")){
+                activeLeader = brokerName;
+                broker.role = "leader";
+                System.out.println("New leader elected: " + activeLeader);
+            }
+            break;
+        }
+    }
+
+    public static void recoverBroker(String brokerName){
+        BrokerNode recoveringBroker = brokers.get(brokerName);
+        BrokerNode leaderBroker = brokers.get(activeLeader);
+        recoveringBroker.messages.clear();
+
+        for(String topic : leaderBroker.messages.keySet()){
+            ArrayList<ArrayList<String>> leaderPartitions = leaderBroker.messages.get(topic);
+            ArrayList<ArrayList<String>> copiedPartitions = new ArrayList<>();
+            for(ArrayList<String> partitions:leaderPartitions){
+                copiedPartitions.add(new ArrayList<>(partitions));
+            }
+            recoveringBroker.messages.put(topic,copiedPartitions);
+        }
+        recoveringBroker.role = "replica";
+
+        System.out.println(brokerName + "synchronized with leader");
+        System.out.println(
+        "Broker1 Data : "
+            + brokers.get("broker1").messages
+        );
+
+        System.out.println(
+            "Broker2 Data : "
+            + brokers.get("broker2").messages
+        );
+        }
+
     static class ConsumerHandler{
         String consumerId;
         String groupId;
@@ -177,6 +293,17 @@ public class Broker{
             this.topic = topic;
             this.partition = partition;
             this.writer = writer;
+        }
+    }
+    static class BrokerNode{
+        String brokerId;
+        String role;
+
+        HashMap<String,ArrayList<ArrayList<String>>> messages = new HashMap<>();
+
+        BrokerNode(String brokerId,String role){
+            this.brokerId = brokerId;
+            this.role = role;   
         }
     }
 }
