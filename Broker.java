@@ -13,6 +13,7 @@ import java.util.HashMap;
 public class Broker{
     static HashMap<String,ArrayList<ArrayList<String>>> topics = new HashMap<>();
     static HashMap<String,Integer> partitionCounters = new HashMap<>();
+    static HashMap<String,Integer> consumerOffsets = new HashMap<>();
     static HashMap<String,BrokerNode> brokers = new HashMap<>();
     static String activeLeader = "broker1";
 
@@ -79,6 +80,7 @@ public class Broker{
     }
 
     public static void handleClient(Socket socket){
+        PrintWriter writer = null;
             try{
                 BufferedReader reader = new BufferedReader(
                     new InputStreamReader(socket.getInputStream())
@@ -161,7 +163,7 @@ public class Broker{
                         System.out.println(leaderBroker.messages);
 
                         for(ConsumerHandler consumer : consumers){
-                            if(consumer.topic.equals(topic)&&consumer.partition==partition){
+                            if(consumer.topic.equals(topic)&&consumer.partitions.contains(partition)){
                                 System.out.println(
                                 "Sending message to consumer"
                             );
@@ -175,7 +177,7 @@ public class Broker{
                         String groupId = extractValue(data,"groupId");
                         String topic = extractValue(data, "topic");
                         int offset = Integer.parseInt(extractValue(data, "offset"));
-                        PrintWriter writer = new PrintWriter(
+                        writer = new PrintWriter(
                             socket.getOutputStream(),
                             true
                         );
@@ -186,37 +188,51 @@ public class Broker{
                                     new ArrayList<>()
                             );
                         }
-                        int partition = consumerGroups.get(groupId).size()% 2;
-                        ConsumerHandler consumer = new ConsumerHandler(consumerId,groupId,topic,partition,writer);
+
+                        ConsumerHandler consumer = new ConsumerHandler(consumerId,groupId,topic,new ArrayList<>(),writer);
                         consumerGroups.get(groupId).add(consumer);
                         consumers.add(consumer);
-                        System.out.println("Consumer assigned partition " + partition);
+                        rebalance(groupId);
+                        System.out.println("Consumer joined group " + groupId);
                         
-                        String logFilePath = "logs/" + topic + "-" + partition + ".log";
-                        File file = new File(logFilePath);
+                        // String logFilePath = "logs/" + topic + "-" + partition + ".log";
+                        // File file = new File(logFilePath);
 
-                        System.out.println(
-                            "Consumer "
-                            + consumerId
-                            + " reading "
-                            + logFilePath
-                        );
+                        // System.out.println(
+                        //     "Consumer "
+                        //     + consumerId
+                        //     + " reading "
+                        //     + logFilePath
+                        // );
 
-                        if(file.exists()){
-                            BufferedReader fileReader = new BufferedReader(new FileReader(file));
-                            ArrayList<String> messages = new ArrayList<>();
-                            String line;
-                            while((line = fileReader.readLine())!=null){
-                                messages.add(line);
-                            }
-                            fileReader.close();
+                        // if(file.exists()){
+                        //     BufferedReader fileReader = new BufferedReader(new FileReader(file));
+                        //     ArrayList<String> messages = new ArrayList<>();
+                        //     String line;
+                        //     while((line = fileReader.readLine())!=null){
+                        //         messages.add(line);
+                        //     }
+                        //     fileReader.close();
 
-                            for(int i = offset;i<messages.size();i++){
-                                writer.println("{\"offset\":\"" + i + "\"," + "\"topic\":\"" + topic + "\"," + "\"message\":\"" + messages.get(i) + "\"}");
-                            }
-                        }
+                        //     for(int i = offset;i<messages.size();i++){
+                        //         writer.println("{\"offset\":\"" + i + "\"," + "\"topic\":\"" + topic + "\"," + "\"message\":\"" + messages.get(i) + "\"}");
+                        //     }
+                        // }
                     }
 
+                }
+                ConsumerHandler disconnectedConsumer = null;
+                for(ConsumerHandler consumer: consumers){
+                    if(consumer.writer==writer){
+                        disconnectedConsumer = consumer;
+                        break;
+                    }
+                }
+                if(disconnectedConsumer!=null){
+                    consumers.remove(disconnectedConsumer);
+                    consumerGroups.get(disconnectedConsumer.groupId).remove(disconnectedConsumer);
+                    System.out.println(disconnectedConsumer.consumerId + "disconnected");
+                    rebalance(disconnectedConsumer.groupId);
                 }
                 System.out.println("Client disconnected");
 
@@ -248,8 +264,8 @@ public class Broker{
                 activeLeader = brokerName;
                 broker.role = "leader";
                 System.out.println("New leader elected: " + activeLeader);
+                break;
             }
-            break;
         }
     }
 
@@ -278,20 +294,67 @@ public class Broker{
             "Broker2 Data : "
             + brokers.get("broker2").messages
         );
+        
+    }
+
+    public static void loadOffsets(){
+        try{
+            File file = new File("offsets.log");
+
+            if(!file.exists()){
+                return;
+            }
+            BufferedReader reader = new BufferedReader(new FileReader(file));
+            
+            String line;
+             
+            while((line = reader.readLine())!=null){
+                String[] parts = line.split(":");
+
+                consumerOffsets.put(parts[0],Integer.parseInt(parts[1]));
+            }
+
+            reader.close();
+            System.out.println("Loaded Offsets : " + consumerOffsets);
+
         }
+        catch(Exception e){
+            e.printStackTrace();
+        }
+    }
+    
+    public static void rebalance(String groupId){
+        ArrayList<ConsumerHandler> groupConsumers = consumerGroups.get(groupId);
+        if(groupConsumers == null||groupConsumers.isEmpty()){
+            return;
+        }
+        int partitioncount = 2;
+        for(ConsumerHandler consumer : groupConsumers)
+        {
+            consumer.partitions.clear();
+        }
+        for(int partition = 0;partition<partitioncount;partition++){
+            ConsumerHandler consumer = groupConsumers.get(partition % groupConsumers.size());
+            consumer.partitions.add(partition);
+        }
+        System.out.println("\n After Rebalance:");
+        for(ConsumerHandler consumer: groupConsumers){
+            System.out.println(consumer.consumerId + "->" + consumer.partitions);
+        }
+    }
 
     static class ConsumerHandler{
         String consumerId;
         String groupId;
         String topic;
-        int partition;
+        ArrayList<Integer> partitions = new ArrayList<>();
 
         PrintWriter writer;
-        ConsumerHandler(String consumerId,String groupId,String topic,int partition,PrintWriter writer){
+        ConsumerHandler(String consumerId,String groupId,String topic,ArrayList<Integer> partitions,PrintWriter writer){
             this.consumerId = consumerId;
             this.groupId = groupId;
             this.topic = topic;
-            this.partition = partition;
+            this.partitions = partitions;
             this.writer = writer;
         }
     }
