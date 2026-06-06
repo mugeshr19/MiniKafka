@@ -24,10 +24,43 @@ public class Consumer1 {
 
             while((data = reader.readLine())!=null){
                 System.out.println("Received Event from 1 : " + data);
+
+                String topic = extractValue(data,"topic");
+                String offsetStr = extractValue(data,"offset");
+                String partitionStr = extractValue(data, "partition");
+                if(!offsetStr.equals("")){
+                    String commitMessage = "{\"type\":\"commit\"," + "\"consumerId\":\"consumer1\"," + "\"groupId\":\"groupA\","
+                    + "\"topic\":\"" + topic + "\"," + "\"partition\":\"" + partitionStr +"\"," + "\"offset\":\"" + offsetStr + "\"}";
+
+                    out.println(commitMessage);
+
+                    System.out.println("Commit offset " + offsetStr);
+                }
             }
         }
         catch(Exception e){
             e.printStackTrace();
         }
+    }
+    public static String extractValue(
+        String json,
+        String key
+    ){
+        String search =
+            "\"" + key + "\":\"";
+
+        int start =
+            json.indexOf(search);
+
+        if(start == -1){
+            return "";
+        }
+
+        start += search.length();
+
+        int end =
+            json.indexOf("\"", start);
+
+        return json.substring(start,end);
     }
 }

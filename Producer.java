@@ -23,7 +23,7 @@ public class Producer {
             String message =
                     "{\"type\":\"produce\","
                     + "\"topic\":\"user-events\","
-                    + "\"message\":\"USER_Deleted\"}";  
+                    + "\"message\":\"USER_isaiwithoutsai\"}";  
 
             writer.println(message);
             socket.close();

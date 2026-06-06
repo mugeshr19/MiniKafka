@@ -36,19 +36,22 @@ public class Broker{
                 )
             );
 
-            new Thread(()->{
-                try{
-                    Thread.sleep(20000);
-                    brokers.get("broker1").role = "dead";
-                    electNewleader();
-                    Thread.sleep(15000);
-                    System.out.println("\nBroker1 recovered!");
-                    recoverBroker("broker1");
-                }
-                catch(Exception e){
-                    e.printStackTrace();
-                }
-            }).start();
+            loadOffsets();
+            loadTopicsFromLogs();
+
+            // new Thread(()->{
+            //     try{
+            //         Thread.sleep(20000);
+            //         brokers.get("broker1").role = "dead";
+            //         electNewleader();
+            //         Thread.sleep(15000);
+            //         System.out.println("\nBroker1 recovered!");
+            //         recoverBroker("broker1");
+            //     }
+            //     catch(Exception e){
+            //         e.printStackTrace();
+            //     }
+            // }).start();
 
             ServerSocket serverSocket = new ServerSocket(9092);
             System.out.println("Broker is running on port 9092");
@@ -166,8 +169,11 @@ public class Broker{
                             if(consumer.topic.equals(topic)&&consumer.partitions.contains(partition)){
                                 System.out.println(
                                 "Sending message to consumer"
-                            );
-                                consumer.writer.println("{\"topic\":\""+topic+"\","+"\"message\":\""+message+"\"}");
+                                );
+                                int offset = leaderBroker.messages.get(topic).get(partition).size() - 1;
+                                consumer.writer.println("{\"offset\":\"" + offset + "\"," + "\"partition\":\"" + partition + "\","
+                                 + "\"topic\":\"" + topic + "\","
+                                    + "\"message\":\"" + message + "\"}");
                             }
                         }
 
@@ -193,31 +199,27 @@ public class Broker{
                         consumerGroups.get(groupId).add(consumer);
                         consumers.add(consumer);
                         rebalance(groupId);
+
+                        for(int partition : consumer.partitions){
+                            String key =    groupId + ":" + topic + ":" + partition;
+                            int committedOffset = consumerOffsets.getOrDefault(key, -1);
+                            System.out.println("Partition " + partition + "starting from offset " + (committedOffset+1));
+                        }
+
                         System.out.println("Consumer joined group " + groupId);
+
+                    }
+                    else if(data.contains("\"type\":\"commit\"")){
+                        String groupId = extractValue(data,"groupId");
+                        String topic = extractValue(data, "topic");
+                        int partition = Integer.parseInt(extractValue(data,"partition"));
+                        int offset = Integer.parseInt(extractValue(data,"offset"));
                         
-                        // String logFilePath = "logs/" + topic + "-" + partition + ".log";
-                        // File file = new File(logFilePath);
+                        String key = groupId + ":" + topic + ":" + partition;
 
-                        // System.out.println(
-                        //     "Consumer "
-                        //     + consumerId
-                        //     + " reading "
-                        //     + logFilePath
-                        // );
-
-                        // if(file.exists()){
-                        //     BufferedReader fileReader = new BufferedReader(new FileReader(file));
-                        //     ArrayList<String> messages = new ArrayList<>();
-                        //     String line;
-                        //     while((line = fileReader.readLine())!=null){
-                        //         messages.add(line);
-                        //     }
-                        //     fileReader.close();
-
-                        //     for(int i = offset;i<messages.size();i++){
-                        //         writer.println("{\"offset\":\"" + i + "\"," + "\"topic\":\"" + topic + "\"," + "\"message\":\"" + messages.get(i) + "\"}");
-                        //     }
-                        // }
+                        consumerOffsets.put(key,offset);
+                        saveOffsets();
+                        System.out.println("committed " + key + " -> " + offset);
                     }
 
                 }
@@ -299,7 +301,12 @@ public class Broker{
 
     public static void loadOffsets(){
         try{
-            File file = new File("offsets.log");
+            File file = new File("logs/offsets.log");
+
+            System.out.println(
+                "Looking for offsets file at: "
+                + file.getAbsolutePath()
+            );
 
             if(!file.exists()){
                 return;
@@ -309,7 +316,7 @@ public class Broker{
             String line;
              
             while((line = reader.readLine())!=null){
-                String[] parts = line.split(":");
+                String[] parts = line.split("=");
 
                 consumerOffsets.put(parts[0],Integer.parseInt(parts[1]));
             }
@@ -317,6 +324,64 @@ public class Broker{
             reader.close();
             System.out.println("Loaded Offsets : " + consumerOffsets);
 
+        }
+        catch(Exception e){
+            e.printStackTrace();
+        }
+    }
+
+    public static void saveOffsets(){
+        try{
+            FileWriter writer = new FileWriter("logs/offsets.log");
+            for(String key:consumerOffsets.keySet()){
+                writer.write(key + "=" + consumerOffsets.get(key) + "\n");
+            }
+            writer.close();
+        }
+        catch(Exception e){
+            e.printStackTrace();
+        }
+    }
+
+    public static void loadTopicsFromLogs(){
+        File logDir = new File("logs");
+        if(!logDir.exists()){
+            return;
+        }
+        File[] files = logDir.listFiles();
+        if(files==null){
+            return;
+        }
+        for(File file : files){
+            System.out.println("Found file: " + file.getName());
+        }
+    }
+
+    public static void recoverPartition(ConsumerHandler consumer,int partition){
+        try{
+            String key = consumer.groupId + ":" + consumer.topic + ":" + partition;
+            int offset = consumerOffsets.getOrDefault(key, -1)+1;
+            System.out.println("Recovering partition " + partition + " from offset " + offset);
+            String logFilePath = "logs/" + consumer.topic + "-" + partition + ".log";
+            File file = new File(logFilePath);
+            if(!file.exists()){
+                return;
+            }
+            BufferedReader fileReader = new BufferedReader(new FileReader(file));
+            ArrayList<String> messages = new ArrayList<>();
+            String line;
+            while((line = fileReader.readLine())!=null){
+                messages.add(line);
+            } 
+            fileReader.close();
+            for(int i = offset;i<messages.size();i++){
+                consumer.writer.println(
+                    "{\"offset\":\""
+                    + i
+                    + "\","
+                    + "\"partition\":\"" 
+                    + partition + "\"," + "\"topic\":\"" + consumer.topic + "\"," + "\"message\":\"" + messages.get(i) + "\"}" );
+            }
         }
         catch(Exception e){
             e.printStackTrace();
@@ -336,6 +401,11 @@ public class Broker{
         for(int partition = 0;partition<partitioncount;partition++){
             ConsumerHandler consumer = groupConsumers.get(partition % groupConsumers.size());
             consumer.partitions.add(partition);
+        }
+        for(ConsumerHandler consumer : groupConsumers){
+            for(int partition:consumer.partitions){
+                recoverPartition(consumer, partition);
+            }
         }
         System.out.println("\n After Rebalance:");
         for(ConsumerHandler consumer: groupConsumers){
