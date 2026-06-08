@@ -39,6 +39,8 @@ public class Broker{
             loadOffsets();
             loadTopicsFromLogs();
 
+            System.out.println("Recovered Topics : " + brokers.get(activeLeader).messages);
+
             // new Thread(()->{
             //     try{
             //         Thread.sleep(20000);
@@ -344,17 +346,49 @@ public class Broker{
     }
 
     public static void loadTopicsFromLogs(){
-        File logDir = new File("logs");
-        if(!logDir.exists()){
-            return;
+        try{
+            File logDir = new File("logs");
+            if(!logDir.exists()){
+                return;
+            }
+            File[] files = logDir.listFiles();
+            if(files==null){
+                return;
+            }
+            for(File file : files){
+                if(file.getName().equals("offsets.log")){
+                    continue;
+                }
+                String fileName = file.getName();
+                String baseName = fileName.replace(".log","");
+
+                int lastDash = baseName.lastIndexOf("-");
+                String topic = baseName.substring(0, lastDash);
+                int partition = Integer.parseInt(baseName.substring(lastDash + 1));
+
+                BrokerNode leaderBroker = brokers.get(activeLeader);
+                if(!leaderBroker.messages.containsKey(topic)){
+                    ArrayList<ArrayList<String>> partitions = new ArrayList<>();
+                    partitions.add(new ArrayList<>());
+                    partitions.add(new ArrayList<>());
+
+                    leaderBroker.messages.put(topic,partitions);
+                }
+
+                BufferedReader reader = new BufferedReader(new FileReader(file));
+                String line;
+                while((line=reader.readLine())!=null){
+                    leaderBroker.messages.get(topic).get(partition).add(line);
+                }
+                reader.close();
+
+                System.out.println("Topic = " + topic + ", Partition = " + partition);
+            }
         }
-        File[] files = logDir.listFiles();
-        if(files==null){
-            return;
+        catch(Exception e){
+            e.printStackTrace();
         }
-        for(File file : files){
-            System.out.println("Found file: " + file.getName());
-        }
+        
     }
 
     public static void recoverPartition(ConsumerHandler consumer,int partition){
