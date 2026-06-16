@@ -4,7 +4,7 @@ import java.io.PrintWriter;
 
 import java.net.Socket;
 
-public class Consumer1 {
+public class Consumer2 {
     public static void main(String[] args){
         try{
             Socket socket = new Socket("localhost",9092);
@@ -13,7 +13,7 @@ public class Consumer1 {
 
             //String subscribeMessage = "{\"type\":\"consume\",\"topic\":\"user-events\"}";
 
-            String subscribeMessage = "{\"type\":\"consume\"," + "\"consumerId\":\"consumer1\"," + "\"groupId\":\"groupA\"," 
+            String subscribeMessage = "{\"type\":\"consume\"," + "\"consumerId\":\"consumer2\"," + "\"groupId\":\"groupA\"," 
             + "\"topic\":\"user-events\"," + "\"offset\":\"0\"}";
 
             out.println(subscribeMessage);
@@ -29,7 +29,7 @@ public class Consumer1 {
                 String offsetStr = extractValue(data,"offset");
                 String partitionStr = extractValue(data, "partition");
                 if(!offsetStr.equals("")){
-                    String commitMessage = "{\"type\":\"commit\"," + "\"consumerId\":\"consumer1\","
+                    String commitMessage = "{\"type\":\"commit\"," + "\"consumerId\":\"consumer2\","
                     + "\"topic\":\"" + topic + "\"," + "\"partition\":\"" + partitionStr +"\"," + "\"offset\":\"" + offsetStr + "\"}";
 
                     out.println(commitMessage);

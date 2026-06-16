@@ -13,6 +13,7 @@ import java.util.HashMap;
 public class Broker{
     static HashMap<String,ArrayList<ArrayList<String>>> topics = new HashMap<>();
     static HashMap<String,Integer> partitionCounters = new HashMap<>();
+    static HashMap<String,Integer> topicPartitions = new HashMap<>();
     static HashMap<String,Integer> consumerOffsets = new HashMap<>();
     static HashMap<String,BrokerNode> brokers = new HashMap<>();
     static String activeLeader = "broker1";
@@ -38,6 +39,17 @@ public class Broker{
 
             loadOffsets();
             loadTopicsFromLogs();
+            recoverBroker("broker2");
+
+            System.out.println(
+                "Broker1 Data : "
+                + brokers.get("broker1").messages
+            );
+
+            System.out.println(
+                "Broker2 Data : "
+                + brokers.get("broker2").messages
+            );
 
             System.out.println("Recovered Topics : " + brokers.get(activeLeader).messages);
 
@@ -96,7 +108,28 @@ public class Broker{
 
                     System.out.println("Received Message: " + data);
 
-                    if(data.contains("\"type\":\"produce\"")){
+                    if (data.contains("\"type\":\"create-topic\"")) {
+                        String topic = extractValue(data, "topic");
+                        int partitions = Integer.parseInt(extractValue(data, "partitions"));
+                        topicPartitions.put(topic, partitions);
+                        BrokerNode leaderBroker = brokers.get(activeLeader);
+                        ArrayList<ArrayList<String>> topicData = new ArrayList<>();
+                        for(int i = 0;i<partitions;i++){
+                            topicData.add(new ArrayList<>());
+                        }
+                        leaderBroker.messages.put(topic,topicData);
+
+                        File logDir = new File("logs");
+                        if(!logDir.exists()){
+                            logDir.mkdirs();
+                        }
+                        for(int i = 0;i<partitions;i++){
+                            File partitionFile = new File("logs/" + topic + "-" + i + ".log");
+                            partitionFile.createNewFile();
+                        }
+
+                        System.out.println("Created Topic : "+ topic + " with " + partitions + " partitions");
+                    }else if(data.contains("\"type\":\"produce\"")){
 
                         String topic = extractValue(data,"topic");
 
@@ -108,9 +141,11 @@ public class Broker{
 
                         if(!leaderBroker.messages.containsKey(topic)){
                             ArrayList<ArrayList<String>> partitions = new ArrayList<>();
-                            partitions.add(new ArrayList<>());
-                            partitions.add(new ArrayList<>());
-
+                            int partitionCount = topicPartitions.getOrDefault(topic, 2);
+                            for(int i = 0;i<partitionCount;i++){
+                                partitions.add(new ArrayList<>());
+                            }
+      
                             leaderBroker.messages.put(
                                 topic,
                                 partitions
@@ -119,7 +154,8 @@ public class Broker{
                         if(!partitionCounters.containsKey(topic)){
                             partitionCounters.put(topic,0);
                         }
-                        int partition = partitionCounters.get(topic) % 2;
+                        int partitionCount = topicPartitions.getOrDefault(topic, 2);
+                        int partition = partitionCounters.get(topic) % partitionCount;
                         partitionCounters.put(topic,partitionCounters.get(topic)+1);
                         leaderBroker.messages.get(topic).get(partition).add(message);
 
@@ -130,11 +166,11 @@ public class Broker{
                                 continue;
                             }
                             if(!broker.messages.containsKey(topic)){
-                                ArrayList<ArrayList<String>> partitions = new ArrayList<>();
-                                new ArrayList<>();
-                                partitions.add(new ArrayList<>());
-                                partitions.add(new ArrayList<>());
-
+                                int partitionsCount = topicPartitions.get(topic);
+                                ArrayList<ArrayList<String>> partitions = new ArrayList<>(); 
+                                for(int i = 0;i<partitionsCount;i++){
+                                    partitions.add(new ArrayList<>());
+                                }
                                 broker.messages.put(topic,partitions);
                             }
                             broker.messages.get(topic).get(partition).add(message);
@@ -347,6 +383,7 @@ public class Broker{
 
     public static void loadTopicsFromLogs(){
         try{
+            HashMap<String, Integer> maxPartitions = new HashMap<>();
             File logDir = new File("logs");
             if(!logDir.exists()){
                 return;
@@ -364,26 +401,61 @@ public class Broker{
 
                 int lastDash = baseName.lastIndexOf("-");
                 String topic = baseName.substring(0, lastDash);
-                int partition = Integer.parseInt(baseName.substring(lastDash + 1));
+                int partition = Integer.parseInt(baseName.substring(lastDash + 1)); 
 
-                BrokerNode leaderBroker = brokers.get(activeLeader);
-                if(!leaderBroker.messages.containsKey(topic)){
-                    ArrayList<ArrayList<String>> partitions = new ArrayList<>();
-                    partitions.add(new ArrayList<>());
-                    partitions.add(new ArrayList<>());
+                int currentMax = maxPartitions.getOrDefault(topic,-1);
+                if(partition>currentMax){
+                    maxPartitions.put(topic,partition);
+                }   
+                System.out.println("Topic = " + topic + ", Partition = " + partition);
+            }
+            for(String topic :  maxPartitions.keySet()){
+                int partitionCount = maxPartitions.get(topic)+1;
 
-                    leaderBroker.messages.put(topic,partitions);
+                topicPartitions.put(topic,partitionCount);
+                System.out.println(topic+" has "+partitionCount+" partitions");
+            }
+            BrokerNode leaderBroker = brokers.get(activeLeader);
+            for(String topic:topicPartitions.keySet()){
+                int partitionCount = topicPartitions.get(topic);
+                ArrayList<ArrayList<String>> partitions = new ArrayList<>() ;
+                for(int i = 0; i < partitionCount; i++){
+                    partitions.add(new ArrayList<>());
+                }
+                leaderBroker.messages.put(topic,partitions);
+            }
+
+            for(File file : files){
+
+                if(file.getName().equals("offsets.log")){
+                    continue;
                 }
 
+                String fileName = file.getName();
+                String baseName = fileName.replace(".log","");
+                int lastDash = baseName.lastIndexOf("-");
+                String topic = baseName.substring(0,lastDash);
+                int partition = Integer.parseInt(baseName.substring(lastDash + 1));
+
                 BufferedReader reader = new BufferedReader(new FileReader(file));
+
                 String line;
-                while((line=reader.readLine())!=null){
+                while((line = reader.readLine()) != null){
                     leaderBroker.messages.get(topic).get(partition).add(line);
                 }
                 reader.close();
-
-                System.out.println("Topic = " + topic + ", Partition = " + partition);
             }
+
+            for(String topic : topicPartitions.keySet()){
+                int totalMessages = 0;
+                ArrayList<ArrayList<String>> partitions = leaderBroker.messages.get(topic);
+                for(ArrayList<String> partitionData : partitions){
+                    totalMessages += partitionData.size();
+                }
+                partitionCounters.put(topic,totalMessages);
+                System.out.println("Recovered counter for " + topic + " = " + totalMessages);
+            }
+            System.out.println("Recovered Topics : " + leaderBroker.messages.keySet());
         }
         catch(Exception e){
             e.printStackTrace();
@@ -427,7 +499,7 @@ public class Broker{
         if(groupConsumers == null||groupConsumers.isEmpty()){
             return;
         }
-        int partitioncount = 2;
+        int partitioncount = topicPartitions.getOrDefault(groupConsumers.get(0).topic, 2);
         for(ConsumerHandler consumer : groupConsumers)
         {
             consumer.partitions.clear();
@@ -444,6 +516,8 @@ public class Broker{
         System.out.println("\n After Rebalance:");
         for(ConsumerHandler consumer: groupConsumers){
             System.out.println(consumer.consumerId + "->" + consumer.partitions);
+
+            consumer.writer.println("{\"type\":\"assignment\"," + "\"partitions\":\"" + consumer.partitions + "\"}");
         }
     }
 

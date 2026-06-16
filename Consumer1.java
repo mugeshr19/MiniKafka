@@ -25,6 +25,11 @@ public class Consumer1 {
             while((data = reader.readLine())!=null){
                 System.out.println("Received Event from 1 : " + data);
 
+                if(data.contains("\"type\":\"assignment\"")){
+                    System.out.println("New assignment : " + data);
+                    continue;
+                }
+
                 String topic = extractValue(data,"topic");
                 String offsetStr = extractValue(data,"offset");
                 String partitionStr = extractValue(data, "partition");
