@@ -112,6 +112,7 @@ public class Broker{
                         String topic = extractValue(data, "topic");
                         int partitions = Integer.parseInt(extractValue(data, "partitions"));
                         topicPartitions.put(topic, partitions);
+                        saveTopics();
                         BrokerNode leaderBroker = brokers.get(activeLeader);
                         ArrayList<ArrayList<String>> topicData = new ArrayList<>();
                         for(int i = 0;i<partitions;i++){
@@ -138,6 +139,7 @@ public class Broker{
                         System.out.println("Current Leader : " + leaderBroker.brokerId);
 
                         String message = extractValue(data,"message");
+                        String key = extractValue(data,"key");
 
                         if(!leaderBroker.messages.containsKey(topic)){
                             ArrayList<ArrayList<String>> partitions = new ArrayList<>();
@@ -155,8 +157,14 @@ public class Broker{
                             partitionCounters.put(topic,0);
                         }
                         int partitionCount = topicPartitions.getOrDefault(topic, 2);
-                        int partition = partitionCounters.get(topic) % partitionCount;
-                        partitionCounters.put(topic,partitionCounters.get(topic)+1);
+                        int partition;
+                        if(!key.equals("")){
+                            partition = Math.abs(key.hashCode())%partitionCount;
+                        }
+                        else{
+                            partition = partitionCounters.get(topic) % partitionCount;
+                            partitionCounters.put(topic,partitionCounters.get(topic)+1);
+                        }
                         leaderBroker.messages.get(topic).get(partition).add(message);
 
                         for(String brokerName : brokers.keySet()){
@@ -198,6 +206,7 @@ public class Broker{
                         fileWriter.write(message + "\n");
 
                         fileWriter.close();
+                        writer.println("{\"status\":\"ACK\"}");
 
                         System.out.println("stored in topic" + topic);
                         System.out.println("\nCurrent topic : ");
@@ -258,6 +267,9 @@ public class Broker{
                         consumerOffsets.put(key,offset);
                         saveOffsets();
                         System.out.println("committed " + key + " -> " + offset);
+                    }
+                    else if(data.contains("\"type\":\"show-lag\"")){
+                        showConsumerlag();
                     }
 
                 }
@@ -373,6 +385,35 @@ public class Broker{
             FileWriter writer = new FileWriter("logs/offsets.log");
             for(String key:consumerOffsets.keySet()){
                 writer.write(key + "=" + consumerOffsets.get(key) + "\n");
+            }
+            writer.close();
+        }
+        catch(Exception e){
+            e.printStackTrace();
+        }
+    }
+
+    public static void showConsumerlag(){
+        System.out.println("\nConsumer lag Report\n");
+        for(String key : consumerOffsets.keySet()){
+            String[] parts = key.split(":");
+            String groupId = parts[0];
+            String topic = parts[1];
+            int partition = Integer.parseInt(parts[2]);
+            
+            BrokerNode leaderBroker = brokers.get(activeLeader);
+            int lastestOffset = leaderBroker.messages.get(topic).get(partition).size()-1;
+            int committedOffset = consumerOffsets.get(key);
+            int lag = lastestOffset - committedOffset;
+            System.out.println(key+" | Latest="+lastestOffset+" | Committed="+committedOffset+" | Lag="+lag);
+        }
+    }
+
+    public static void saveTopics(){
+        try{
+            FileWriter writer = new FileWriter("logs/topics.log");
+            for(String topic : topicPartitions.keySet()){
+                writer.write(topic + "=" + topicPartitions.get(topic) + "\n");
             }
             writer.close();
         }
