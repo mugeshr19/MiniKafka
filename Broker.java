@@ -1,11 +1,14 @@
 import java.util.Base64;
 import java.io.ByteArrayOutputStream;
+import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.Buffer;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.FileReader;
@@ -224,8 +227,9 @@ public class Broker{
                         String logFilePath = "logs/" + topic + "-" + partition + ".log";
 
                         FileWriter fileWriter = new FileWriter(logFilePath,true);
+                        String compressedMessage = compress(message);
 
-                        fileWriter.write(message + "\n");
+                        fileWriter.write(compressedMessage + "\n");
 
                         fileWriter.close();
                         // int replicaCount = brokers.size()-1;
@@ -543,7 +547,8 @@ public class Broker{
 
                 String line;
                 while((line = reader.readLine()) != null){
-                    leaderBroker.messages.get(topic).get(partition).add(line);
+                    String originalMessage = decompress(line);
+                    leaderBroker.messages.get(topic).get(partition).add(originalMessage);
                 }
                 reader.close();
             }
@@ -636,6 +641,25 @@ public class Broker{
             e.printStackTrace();
         }
         return message;
+    }
+    public static String decompress(String compressedMessage){
+        try{
+            byte[] compressedBytes = Base64.getDecoder().decode(compressedMessage);
+            ByteArrayInputStream bais = new ByteArrayInputStream(compressedBytes);
+            GZIPInputStream gzip = new GZIPInputStream(bais);
+            BufferedReader reader = new BufferedReader(new InputStreamReader(gzip));
+            StringBuilder result = new StringBuilder();
+            String line;
+            while((line = reader.readLine())!=null){
+                result.append(line);
+            }
+            reader.close();
+            return result.toString();
+        }
+        catch(Exception e){
+            e.printStackTrace();
+        }
+        return compressedMessage;
     }
 
     static class ConsumerHandler{
