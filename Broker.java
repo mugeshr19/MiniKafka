@@ -1,3 +1,6 @@
+import java.util.Base64;
+import java.io.ByteArrayOutputStream;
+import java.util.zip.GZIPOutputStream;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
@@ -14,9 +17,12 @@ public class Broker{
     static HashMap<String,ArrayList<ArrayList<String>>> topics = new HashMap<>();
     static HashMap<String,Integer> partitionCounters = new HashMap<>();
     static HashMap<String,Integer> topicPartitions = new HashMap<>();
+    static HashMap<String,ArrayList<String>> topicISR = new HashMap<>();
     static HashMap<String,Integer> consumerOffsets = new HashMap<>();
+    static int MAX_MESSAGES_PER_PARTITION = 10;
     static HashMap<String,BrokerNode> brokers = new HashMap<>();
     static String activeLeader = "broker1";
+    static int minInSyncReplicas = 1;
 
     static ArrayList<ConsumerHandler> consumers = new ArrayList<>();
     static HashMap<String,ArrayList<ConsumerHandler>> consumerGroups = new HashMap<>();
@@ -39,7 +45,15 @@ public class Broker{
 
             loadOffsets();
             loadTopicsFromLogs();
+            for(String topic:topicPartitions.keySet()){
+                ArrayList<String> isr = new ArrayList<>();
+                isr.add("broker1");
+                isr.add("broker2");
+                topicISR.put(topic,isr);
+            }
             recoverBroker("broker2");
+            System.out.println("Topic ISR : " + topicISR);
+
 
             System.out.println(
                 "Broker1 Data : "
@@ -50,15 +64,16 @@ public class Broker{
                 "Broker2 Data : "
                 + brokers.get("broker2").messages
             );
+            // brokers.get("broker2").role = "dead";
 
             System.out.println("Recovered Topics : " + brokers.get(activeLeader).messages);
 
             // new Thread(()->{
             //     try{
-            //         Thread.sleep(20000);
+            //         Thread.sleep(10000);
             //         brokers.get("broker1").role = "dead";
             //         electNewleader();
-            //         Thread.sleep(15000);
+            //         Thread.sleep(10000);
             //         System.out.println("\nBroker1 recovered!");
             //         recoverBroker("broker1");
             //     }
@@ -70,16 +85,16 @@ public class Broker{
             ServerSocket serverSocket = new ServerSocket(9092);
             System.out.println("Broker is running on port 9092");
 
-            /*new Thread(()->{
-                try{
-                    Thread.sleep(20000);
-                    brokers.get("broker1").role = "dead";
-                    electNewleader();
-                }
-                catch(Exception e){
-                    e.printStackTrace();
-                }
-            }).start();*/
+            // new Thread(()->{
+            //     try{
+            //         Thread.sleep(10000);
+            //         brokers.get("broker1").role = "dead";
+            //         electNewleader();
+            //     }
+            //     catch(Exception e){
+            //         e.printStackTrace();
+            //     }
+            // }).start();
 
             while(true){
 
@@ -97,12 +112,11 @@ public class Broker{
     }
 
     public static void handleClient(Socket socket){
-        PrintWriter writer = null;
             try{
                 BufferedReader reader = new BufferedReader(
                     new InputStreamReader(socket.getInputStream())
                 );
-
+                PrintWriter writer = new PrintWriter(socket.getOutputStream(),true);
                 String data;
                 while ((data = reader.readLine()) != null) {
 
@@ -112,6 +126,10 @@ public class Broker{
                         String topic = extractValue(data, "topic");
                         int partitions = Integer.parseInt(extractValue(data, "partitions"));
                         topicPartitions.put(topic, partitions);
+                        ArrayList<String> isr = new ArrayList<>();
+                        isr.add("broker1");
+                        isr.add("broker2");
+                        topicISR.put(topic,isr);
                         saveTopics();
                         BrokerNode leaderBroker = brokers.get(activeLeader);
                         ArrayList<ArrayList<String>> topicData = new ArrayList<>();
@@ -158,7 +176,7 @@ public class Broker{
                         }
                         int partitionCount = topicPartitions.getOrDefault(topic, 2);
                         int partition;
-                        if(!key.equals("")){
+                        if(key!=null&&!key.isEmpty()){
                             partition = Math.abs(key.hashCode())%partitionCount;
                         }
                         else{
@@ -166,6 +184,9 @@ public class Broker{
                             partitionCounters.put(topic,partitionCounters.get(topic)+1);
                         }
                         leaderBroker.messages.get(topic).get(partition).add(message);
+                        applyRetention(topic, partition);
+
+                        int  replicatedCount = 0;
 
                         for(String brokerName : brokers.keySet()){
                             BrokerNode broker = brokers.get(brokerName);
@@ -182,6 +203,7 @@ public class Broker{
                                 broker.messages.put(topic,partitions);
                             }
                             broker.messages.get(topic).get(partition).add(message);
+                            replicatedCount++;
                             System.out.println("Replicated to" + broker.brokerId);
                         }
 
@@ -206,7 +228,13 @@ public class Broker{
                         fileWriter.write(message + "\n");
 
                         fileWriter.close();
-                        writer.println("{\"status\":\"ACK\"}");
+                        // int replicaCount = brokers.size()-1;
+                        if(replicatedCount>=minInSyncReplicas){
+                            writer.println("{\"status\":\"ACK\"}");
+                        }
+                        else{
+                            writer.println("{\"status\":\"REPLICATION_FAILED\"}");
+                        }
 
                         System.out.println("stored in topic" + topic);
                         System.out.println("\nCurrent topic : ");
@@ -230,10 +258,6 @@ public class Broker{
                         String groupId = extractValue(data,"groupId");
                         String topic = extractValue(data, "topic");
                         int offset = Integer.parseInt(extractValue(data, "offset"));
-                        writer = new PrintWriter(
-                            socket.getOutputStream(),
-                            true
-                        );
                         if(!consumerGroups.containsKey(groupId))
                         {
                             consumerGroups.put(
@@ -315,6 +339,10 @@ public class Broker{
             if(broker.role.equals("replica")){
                 activeLeader = brokerName;
                 broker.role = "leader";
+                for(String topics:topicISR.keySet()){
+                    topicISR.get(topics).remove("broker1");
+                }
+                System.out.println("Updated ISR : " + topicISR);
                 System.out.println("New leader elected: " + activeLeader);
                 break;
             }
@@ -335,7 +363,12 @@ public class Broker{
             recoveringBroker.messages.put(topic,copiedPartitions);
         }
         recoveringBroker.role = "replica";
-
+        for(String topic:topicISR.keySet()){
+            if(!topicISR.get(topic).contains(brokerName)){
+                topicISR.get(topic).add(brokerName);
+            }
+        }
+        System.out.println("Updated ISR : " + topicISR);
         System.out.println(brokerName + "synchronized with leader");
         System.out.println(
         "Broker1 Data : "
@@ -387,6 +420,34 @@ public class Broker{
                 writer.write(key + "=" + consumerOffsets.get(key) + "\n");
             }
             writer.close();
+        }
+        catch(Exception e){
+            e.printStackTrace();
+        }
+    }
+
+    public static void applyRetention(String topic,int partition){
+        try{
+            BrokerNode leaderBroker = brokers.get(activeLeader);
+            ArrayList<String> messages = leaderBroker.messages.get(topic).get(partition);
+            while(messages.size()>MAX_MESSAGES_PER_PARTITION){
+                messages.remove(0);
+            }
+            rewritePartitionLog(topic,partition);
+        }
+        catch(Exception e){
+            e.printStackTrace();
+        }
+    }
+    public static void rewritePartitionLog(String topic,int partition){
+        try{
+            BrokerNode leaderBroker = brokers.get(activeLeader);
+            String logFilePath = "logs/" + topic + "-" + partition + ".log";
+            FileWriter fileWriter = new FileWriter(logFilePath);
+            for(String message:leaderBroker.messages.get(topic).get(partition)){
+                fileWriter.write(message + "\n");
+            }
+            fileWriter.close();
         }
         catch(Exception e){
             e.printStackTrace();
@@ -560,6 +621,21 @@ public class Broker{
 
             consumer.writer.println("{\"type\":\"assignment\"," + "\"partitions\":\"" + consumer.partitions + "\"}");
         }
+    }
+
+    public static String compress(String message){
+        try{
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            GZIPOutputStream gzip = new GZIPOutputStream(baos);
+            gzip.write(message.getBytes());
+            gzip.close();
+            return Base64.getEncoder().encodeToString(baos.toByteArray());
+
+        }
+        catch(Exception e){
+            e.printStackTrace();
+        }
+        return message;
     }
 
     static class ConsumerHandler{
